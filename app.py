@@ -39,7 +39,7 @@ COMPASS_SECTORS = [
 
 MASTHEAD_CSS = """
 <style>
-.pagasa-masthead {
+.app-masthead {
     background-color: #0f2a4a;
     color: #ffffff;
     padding: 1.1rem 1.5rem;
@@ -47,12 +47,12 @@ MASTHEAD_CSS = """
     margin-bottom: 1.25rem;
     border-left: 6px solid #f0ad4e;
 }
-.pagasa-masthead h1 {
+.app-masthead h1 {
     color: #ffffff;
     font-size: 1.7rem;
     margin: 0;
 }
-.pagasa-masthead p {
+.app-masthead p {
     color: #cddcec;
     margin: 0.25rem 0 0 0;
     font-size: 0.95rem;
@@ -61,22 +61,25 @@ MASTHEAD_CSS = """
     display: flex;
     gap: 0.75rem;
     align-items: flex-start;
-    background-color: #fcf8e3;
-    border-left: 6px solid #f0ad4e;
+    border-left: 6px solid var(--accent, #f0ad4e);
+    background-color: var(--bg, #fcf8e3);
     border-radius: 4px;
     padding: 0.9rem 1.1rem;
     margin-bottom: 0.6rem;
 }
+.gov-alert.level-warning { --accent: #c0392b; --bg: #f8e6e6; }
+.gov-alert.level-advisory { --accent: #f0ad4e; --bg: #fcf8e3; }
+.gov-alert.level-watch { --accent: #337ab7; --bg: #e3f1fa; }
 .gov-alert .icon { font-size: 1.6rem; line-height: 1; }
-.gov-alert .title { font-weight: 700; color: #66512c; margin-bottom: 0.15rem; }
-.gov-alert .meta { color: #8a6d3b; font-size: 0.85rem; }
+.gov-alert .title { font-weight: 700; color: #1a1a1a; margin-bottom: 0.15rem; }
+.gov-alert .meta { color: #555555; font-size: 0.85rem; }
 .gov-alert a { color: #337ab7; font-weight: 600; }
 .gov-alert-empty {
-    background-color: #d9edf7;
+    background-color: #e3f1fa;
     border-left: 6px solid #337ab7;
     border-radius: 4px;
     padding: 0.9rem 1.1rem;
-    color: #31708f;
+    color: #235478;
     margin-bottom: 0.6rem;
 }
 .day-card {
@@ -139,11 +142,6 @@ def cached_regional_snapshot() -> pd.DataFrame:
     return fetch_regional_snapshot(get_all_coordinates())
 
 
-@st.cache_data(ttl=900)
-def cached_pagasa_bulletins():
-    return fetch_pagasa_bulletins()
-
-
 @st.cache_data(ttl=3600)
 def cached_historical(lat: float, lon: float, start: str, end: str) -> pd.DataFrame:
     return fetch_historical_data(lat, lon, start, end)
@@ -153,9 +151,9 @@ def render_masthead() -> None:
     st.markdown(MASTHEAD_CSS, unsafe_allow_html=True)
     st.markdown(
         """
-        <div class="pagasa-masthead">
+        <div class="app-masthead">
             <h1>🌪️ ASEAN Weather &amp; Typhoon Tracking Dashboard</h1>
-            <p>Global forecasts via Open-Meteo, with a live PAGASA advisory reference for the Philippines.</p>
+            <p>Global forecasts and severe weather advisories for all 11 ASEAN member states, via Open-Meteo.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -347,7 +345,7 @@ def render_time_series_combo(daily_df: pd.DataFrame, hourly_df: pd.DataFrame) ->
 
 
 def render_hourly_detail(hourly_df: pd.DataFrame, selected_day: date, location_label: str) -> None:
-    st.markdown("##### 🕐 Hourly Detail (PAGASA-style)")
+    st.markdown("##### 🕐 Hourly Forecast Breakdown")
     st.caption(f"Forecast for {location_label} — {selected_day.strftime('%a, %b %d %Y')}")
     day_df = hourly_df[hourly_df.index.date == selected_day]
     if day_df.empty:
@@ -437,37 +435,37 @@ def render_wind_rose(hourly_df: pd.DataFrame, start: date, end: date) -> None:
     st.plotly_chart(fig, use_container_width=True)
 
 
-def render_pagasa_section() -> None:
-    st.markdown("##### 🌀 PAGASA Live Advisories (Philippines)")
-    try:
-        bulletins = cached_pagasa_bulletins()
-    except requests.RequestException as exc:
-        st.error(f"Could not reach PAGASA: {exc}")
-        return
+HAZARD_ICONS = {"Heavy Rainfall": "🌧️", "Strong Wind": "💨", "Extreme Heat": "🌡️"}
+LEVEL_CSS_CLASS = {"Warning": "level-warning", "Advisory": "level-advisory", "Watch": "level-watch"}
 
-    if not bulletins:
+
+def render_regional_advisory_section(snapshot_df: pd.DataFrame, selected_country: str) -> None:
+    st.markdown("##### 🌊 Regional Weather Advisory (ASEAN)")
+    st.caption(
+        "Independently generated from live Open-Meteo forecast thresholds for all 11 ASEAN "
+        "member states — not sourced from any single country's meteorological agency."
+    )
+
+    advisories = build_advisories(snapshot_df)
+    if not advisories:
         st.markdown(
-            """
-            <div class="gov-alert-empty">
-                No active tropical cyclone bulletin detected, or PAGASA's page structure
-                could not be parsed. Check the
-                <a href="https://www.pagasa.dost.gov.ph/tropical-cyclone/severe-weather-bulletin" target="_blank">
-                official site</a> directly.
-            </div>
-            """,
+            '<div class="gov-alert-empty">✅ No heavy rainfall, strong wind, or extreme heat '
+            "advisories are active across ASEAN today.</div>",
             unsafe_allow_html=True,
         )
         return
 
-    for bulletin in bulletins:
+    advisories = sorted(advisories, key=lambda a: a.country != selected_country)
+
+    for advisory in advisories:
+        badge = " · Selected" if advisory.country == selected_country else ""
         st.markdown(
             f"""
-            <div class="gov-alert">
-                <div class="icon">⚠️</div>
+            <div class="gov-alert {LEVEL_CSS_CLASS[advisory.level]}">
+                <div class="icon">{HAZARD_ICONS.get(advisory.hazard, '⚠️')}</div>
                 <div>
-                    <div class="title">{bulletin.title}</div>
-                    <div class="meta">{bulletin.summary}</div>
-                    <a href="{bulletin.link}" target="_blank">View full bulletin →</a>
+                    <div class="title">{advisory.country}{badge} — {advisory.hazard} {advisory.level}</div>
+                    <div class="meta">{advisory.message}</div>
                 </div>
             </div>
             """,
@@ -516,8 +514,12 @@ def main() -> None:
         st.error(str(exc))
         return
 
-    if selected_country == "Philippines":
-        render_pagasa_section()
+    snapshot_df = None
+    try:
+        snapshot_df = cached_regional_snapshot()
+        render_regional_advisory_section(snapshot_df, selected_country)
+    except requests.RequestException as exc:
+        st.warning(f"Regional advisory data unavailable: {exc}")
 
     st.subheader(f"📍 {label}")
     st.caption(f"Coordinates: {lat:.4f}, {lon:.4f}")
@@ -530,11 +532,8 @@ def main() -> None:
 
     render_current_metrics(daily_df, hourly_df)
 
-    try:
-        snapshot_df = cached_regional_snapshot()
+    if snapshot_df is not None:
         render_regional_map(snapshot_df, selected_country)
-    except requests.RequestException as exc:
-        st.warning(f"Regional map unavailable: {exc}")
 
     start, end, selected_day = render_calendar_controls(daily_df)
     ranged_daily = daily_df.loc[
